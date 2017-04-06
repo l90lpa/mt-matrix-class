@@ -78,6 +78,7 @@ private:
     int m_size;
     std::mutex m_mutex;
     unsigned int m_maxThreads;
+    unsigned int m_workerThreads;
     std::vector<std::thread> m_threads;
     
     void parallelTranspose(std::vector<T> &tempMatrix, int lBound, int uBound);
@@ -86,7 +87,7 @@ private:
     friend void scalarMulti <T> (MT_D_Base_Matrix<T> &temp, const T k, const MT_D_Base_Matrix<T> &a, int lB, int uB);
 public:
     //Initialize as a zeros matrix.
-    MT_D_Base_Matrix(int rows, int cols) : m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}
+    MT_D_Base_Matrix(int rows, int cols) : m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}, m_workerThreads{std::thread::hardware_concurrency() - 1}
     {
         m_matrix.resize(m_size);
         for(auto &x : m_matrix)
@@ -97,7 +98,7 @@ public:
     }
     
     //Initialize matrix with a CSV file.
-    MT_D_Base_Matrix(std::string fileCSV, int rows, int cols) : m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}
+    MT_D_Base_Matrix(std::string fileCSV, int rows, int cols) : m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}, m_workerThreads{std::thread::hardware_concurrency() - 1}
     {
         std::ifstream inf(fileCSV);
         if(!inf)
@@ -105,7 +106,7 @@ public:
             //std::cerr << "CSV file could not be opened for reading!" << std::endl;
         }
         m_matrix.resize(m_size);
-        m_threads.resize(m_maxThreads);
+        m_threads.resize(m_workerThreads);
         for(auto &x : m_matrix)
         {
             std::string temp;
@@ -116,22 +117,22 @@ public:
     }
     
     //Initialize with std::vector.
-    MT_D_Base_Matrix(std::vector<T> matrix, int rows, int cols) : m_matrix{matrix}, m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}
+    MT_D_Base_Matrix(std::vector<T> matrix, int rows, int cols) : m_matrix{matrix}, m_rows{rows}, m_cols{cols}, m_size{rows * cols}, m_maxThreads{std::thread::hardware_concurrency()}, m_workerThreads{std::thread::hardware_concurrency() - 1}
     {
-        m_threads.resize(m_maxThreads);
+        m_threads.resize(m_workerThreads);
     }
     
     //Copy constructor.
-    MT_D_Base_Matrix(const MT_D_Base_Matrix& C) : m_rows{C.m_rows}, m_cols{C.m_cols}, m_size{C.m_size}, m_matrix{C.m_matrix}, m_maxThreads{C.m_maxThreads}
+    MT_D_Base_Matrix(const MT_D_Base_Matrix& C) : m_rows{C.m_rows}, m_cols{C.m_cols}, m_size{C.m_size}, m_matrix{C.m_matrix}, m_maxThreads{C.m_maxThreads}, m_workerThreads{C.m_workerThreads}
     {
         //std::cout << "Copy constructor" << '\n';
-        m_threads.resize(m_maxThreads);
+        m_threads.resize(m_workerThreads);
     }
    
     //Destructor
     ~MT_D_Base_Matrix()
     {
-        for(int i = 0; i != m_maxThreads ; ++i)
+        for(int i = 0; i != m_workerThreads ; ++i)
         {
             if(m_threads[i].joinable())
             {
@@ -219,11 +220,12 @@ MT_D_Base_Matrix<T>& MT_D_Base_Matrix<T>::transpose()
     std::vector<T> tempMatrix;
     tempMatrix.resize(m_matrix.size());
     std::vector<int> bound = resourceAllocation(static_cast<int>(m_matrix.size()), m_maxThreads);
-    for(int i = 0; i < m_maxThreads; ++i)
+    for(int i = 0; i < m_workerThreads; ++i)
     {
         m_threads[i] = std::thread(&MT_D_Base_Matrix<T>::parallelTranspose, this, std::ref(tempMatrix), bound[i], bound[i + 1]);
     }
-    for(int i = 0; i < m_maxThreads; ++i)
+    parallelTranspose(tempMatrix, bound[m_workerThreads], bound[m_maxThreads]);
+    for(int i = 0; i < m_workerThreads; ++i)
     {
         m_threads[i].join();
     }
@@ -285,11 +287,12 @@ MT_D_Base_Matrix<T> operator+
     if(size > 10)
     {
         std::vector<int> bound = resourceAllocation(static_cast<int>(temp.m_matrix.size()), temp.m_maxThreads);
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             temp.m_threads[i] = std::thread(paraAdd<T>, std::ref(temp), std::ref(a), std::ref(b), bound[i], bound[i + 1]);
         }
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        paraAdd(temp, a, b, bound[temp.m_workerThreads], bound[temp.m_maxThreads]);
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             temp.m_threads[i].join();
         }
@@ -331,11 +334,12 @@ MT_D_Base_Matrix<T> operator-
     if(size > 10)
     {
         std::vector<int> bound = resourceAllocation(static_cast<int>(temp.m_matrix.size()), temp.m_maxThreads);
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             temp.m_threads[i] = std::thread(paraSub<T>, std::ref(temp), std::ref(a), std::ref(b), bound[i], bound[i + 1]);
         }
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        paraSub(temp, a, b, bound[temp.m_workerThreads], bound[temp.m_maxThreads]);
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             temp.m_threads[i].join();
         }
@@ -345,7 +349,7 @@ MT_D_Base_Matrix<T> operator-
     {
         for(int i = 0; i < size; ++i)
         {
-            temp.m_matrix[i] = a.m_matrix[i] + b.m_matrix[i];
+            temp.m_matrix[i] = a.m_matrix[i] - b.m_matrix[i];
         }
     }
     return temp;
@@ -371,12 +375,13 @@ MT_D_Base_Matrix<T> operator* (const T k, const MT_D_Base_Matrix<T> &a)
     if(size > 10)
     {
         std::vector<int> bound = resourceAllocation(static_cast<int>(temp.m_matrix.size()), temp.m_maxThreads);
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             
             temp.m_threads[i] = std::thread(scalarMulti<T>, std::ref(temp), k, std::ref(a), bound[i], bound[i + 1]);
         }
-        for(int i = 0; i < temp.m_maxThreads; i++)
+        scalarMulti(temp, k, a, bound[temp.m_workerThreads], bound[temp.m_maxThreads]);
+        for(int i = 0; i < temp.m_workerThreads; i++)
         {
             temp.m_threads[i].join();
         }
