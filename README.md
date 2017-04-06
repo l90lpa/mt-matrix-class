@@ -5,9 +5,9 @@ Current functionality includes:
 
 ## 0. Proposed works
 
-Friend functions:
+####Friend functions:
 - Matrix multiplication.
-Member functions:
+####Member functions:
 - Determinant.
 - Inverse.
 
